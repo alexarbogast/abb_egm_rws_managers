@@ -281,6 +281,44 @@ void EGMManager::Channel::prepareOutputs()
   output_.mutable_robot()->CopyFrom(input_.feedback().robot());
   output_.mutable_external()->CopyFrom(input_.feedback().external());
 
+  // Remap external joint outputs for different logical axes arrangments
+  int n_external_axes = output_.external().joints().position().values_size();
+  if (n_external_axes > 0)
+  {
+    std::vector<int> logical_axes;
+    logical_axes.reserve(n_external_axes);
+    for (const auto& unit : configuration_.mech_unit_group.mechanical_units())
+    {
+      if (unit.type() == MechanicalUnit_Type_SINGLE)
+      {
+        for (const auto& single : unit.singles())
+        {
+          logical_axes.push_back(single.joint().logical_axis());
+        }
+      }
+      else if (unit.type() == MechanicalUnit_Type_ROBOT)
+      {
+        for (const auto& joint : unit.robot().joints())
+        {
+          logical_axes.push_back(joint.logical_axis());
+        }
+      }
+    }
+    int max_logical_idx = *std::max_element(logical_axes.begin(), logical_axes.end());
+    output_.mutable_external()->mutable_joints()->mutable_position()->clear_values();
+    output_.mutable_external()->mutable_joints()->mutable_velocity()->clear_values();
+    output_.mutable_external()->mutable_joints()->mutable_position()->mutable_values()->Resize(max_logical_idx - 6, 0.0);
+    output_.mutable_external()->mutable_joints()->mutable_velocity()->mutable_values()->Resize(max_logical_idx - 6, 0.0);
+
+    auto input_position{ input_.feedback().external().joints().position().values() };
+    auto input_velocity{ input_.feedback().external().joints().velocity().values() };
+    for (size_t i = 0; i < logical_axes.size(); ++i)
+    {
+      output_.mutable_external()->mutable_joints()->mutable_position()->mutable_values()->Set(logical_axes[i] - 7, input_position[i]);
+      output_.mutable_external()->mutable_joints()->mutable_velocity()->mutable_values()->Set(logical_axes[i] - 7, input_velocity[i]);
+    }
+  }
+
   auto robot_cartesian_velocities{output_.mutable_robot()->mutable_cartesian()->mutable_velocity()};
   robot_cartesian_velocities->mutable_linear()->set_x(0.0);
   robot_cartesian_velocities->mutable_linear()->set_y(0.0);
@@ -293,12 +331,6 @@ void EGMManager::Channel::prepareOutputs()
   for(int i = 0; i < robot_joint_velocities->values_size(); ++i)
   {
     robot_joint_velocities->set_values(i, 0.0);
-  }
-
-  auto external_joint_velocities{output_.mutable_external()->mutable_joints()->mutable_velocity()};
-  for(int i = 0; i < external_joint_velocities->values_size(); ++i)
-  {
-    external_joint_velocities->set_values(i, 0.0);
   }
 }
 
@@ -341,30 +373,22 @@ void EGMManager::Channel::updateExternalJointCommands(const MotionData::Mechanic
   auto p_positions{output_.mutable_external()->mutable_joints()->mutable_position()};
   auto p_velocities{output_.mutable_external()->mutable_joints()->mutable_velocity()};
 
-  int counter{0};
-
   for(auto& unit : group.units)
   {
     if(unit.active && (unit.type == MechanicalUnit_Type_ROBOT || unit.type == MechanicalUnit_Type_SINGLE))
     {
       for(const auto& joint : unit.joints)
       {
-        // The validation throws an exception if any of the values are erroneous.
-        validateJointCommand(joint);
+        double conversion_factor{(joint.rotational ? Constants::RAD_TO_DEG : Constants::M_TO_MM)};
 
-        if(counter < p_positions->values_size() && counter < p_velocities->values_size())
+        // write the positions to the (LA - 6 - 1) index
+        p_positions->set_values(joint.logical_axis - 7, joint.command.position * conversion_factor);
+
+        // Only accept velocity commands larger than the speed threshold.
+        if(std::abs(joint.command.velocity * conversion_factor) > MIN_SPEED_THRESHOLD)
         {
-          double conversion_factor{(joint.rotational ? Constants::RAD_TO_DEG : Constants::M_TO_MM)};
-          p_positions->set_values(counter, joint.command.position*conversion_factor);
-
-          // Only accept velocity commands larger than the speed threshold.
-          if(std::abs(joint.command.velocity*conversion_factor) > MIN_SPEED_THRESHOLD)
-          {
-            p_velocities->set_values(counter, joint.command.velocity*conversion_factor);
-          }
+          p_velocities->set_values(joint.logical_axis - 7, joint.command.velocity * conversion_factor);
         }
-
-        ++counter;
       }
     }
   }

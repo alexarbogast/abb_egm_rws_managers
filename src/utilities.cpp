@@ -137,6 +137,22 @@ void initializeMotionData(MotionData& motion_data, const RobotControllerDescript
       motion_unit.joints.push_back(motion_joint);
     }
 
+    // Add joint logical axis
+    if (unit.type() == MechanicalUnit_Type_ROBOT || unit.type() == MechanicalUnit_Type_TCP_ROBOT)
+    {
+      const auto& joints = unit.robot().joints();
+      auto& motion_data_joints = motion_unit.joints;
+      for (int i = 0; i < joints.size(); ++i)
+      {
+        motion_data_joints[i].logical_axis = joints[i].logical_axis();
+      }
+    }
+    else if (unit.type() == MechanicalUnit_Type_SINGLE)
+    {
+      auto& joint = motion_unit.joints.back();
+      joint.logical_axis = unit.singles()[0].joint().logical_axis();
+    }
+
     return motion_unit;
   }};
 

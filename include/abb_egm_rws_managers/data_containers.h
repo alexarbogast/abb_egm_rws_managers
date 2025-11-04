@@ -377,6 +377,11 @@ struct MotionData
     double upper_limit;
 
     /**
+     * \brief The index of the joint's logical axis.
+     */
+    int logical_axis;
+
+    /**
      * \brief State of the joint.
      */
     JointState state;
